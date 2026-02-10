@@ -233,6 +233,29 @@ const service = createLeaderboardService(
 );
 ```
 
+### 5) Windowed key strategy builder
+
+```ts
+import { createWindowedLeaderboardRedisConfig } from "@mattycatty/rolling-leaderboard";
+
+const built = createWindowedLeaderboardRedisConfig({
+  prefix: "lb",
+  categories: ["points", "best_streak"] as const,
+  timeframes: ["day", "week"] as const,
+  windows: ["h", "d", "all"] as const,
+  isComparisonCategory: (category) => category === "best_streak",
+  shouldIngestForTimeframe: (timeframe) => timeframe === "day",
+  getBuildWindowSources: (timeframe, date) =>
+    timeframe === "day"
+      ? [{ window: "h", date }]
+      : [{ window: "d", date }],
+  formatWindowKey: (prefix, window, date, category) =>
+    `${prefix}:window:${window}:${date.toISOString()}:${category}`,
+});
+
+const store = createRedisLeaderboardStore(redis, built.redis);
+```
+
 ## Validation behavior
 
 - Service creation throws `LeaderboardConfigError` for invalid defaults.
