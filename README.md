@@ -1,0 +1,284 @@
+# @mattycatty/rolling-leaderboard
+
+Headless, configurable rolling leaderboard service with dependency-injected storage/adapters.
+
+## Why this package
+
+- Keeps leaderboard domain logic separate from API framework code.
+- Works in Bun and Node projects (ESM package output).
+- Lets consumers choose their own storage/user lookup/metadata strategy.
+- Supports per-category aggregation (`sum`, `max`, `min`) for mixed leaderboard types.
+- Supports custom rolling-window key strategies for projects with bucketed storage.
+
+## Install
+
+1. npm (recommended)
+
+```sh
+npm install @mattycatty/rolling-leaderboard
+```
+
+2. Git dependency
+
+```json
+{
+  "dependencies": {
+    "@mattycatty/rolling-leaderboard": "github:mattycatty/rolling-leaderboard#v0.1.0"
+  }
+}
+```
+
+3. Monorepo workspace
+
+```json
+{
+  "dependencies": {
+    "@mattycatty/rolling-leaderboard": "workspace:^"
+  }
+}
+```
+
+## Runtime compatibility (Bun + Node)
+
+- Package code is plain TypeScript/ESM and builds to `dist`.
+- Consumers can run it in Node or Bun.
+- Avoid Bun-only runtime APIs in exported library code.
+- Bun is used for local test tooling here; that does not force consumers to run Bun.
+
+## Exports
+
+- `createLeaderboardService`
+- `createRedisLeaderboardStore`
+- `createMemoryLeaderboardStore`
+- `RedisLeaderboardStore`
+- `MemoryLeaderboardStore`
+- Types and ports (`LeaderboardStorePort`, `UsernamePort`, etc.)
+
+## Usage examples
+
+### 1) Minimal headless usage
+
+```ts
+import { createLeaderboardService } from "@mattycatty/rolling-leaderboard";
+
+type Category = "points" | "tasks_completed";
+type Timeframe = "24h" | "7d";
+
+const memory = new Map<string, number>(); // replace with real adapter
+
+const service = createLeaderboardService<Category, Timeframe>(
+  {
+    categories: ["points", "tasks_completed"],
+    defaultCategory: "points",
+    timeframes: ["24h", "7d"],
+    defaultTimeframe: "24h",
+  },
+  {
+    store: {
+      async ingestWindows() {
+        throw new Error("Implement a real store adapter");
+      },
+      async buildRankingFromWindows() {
+        throw new Error("Implement a real store adapter");
+      },
+      async getTopRankedUsers() {
+        return null;
+      },
+      async getUserRank() {
+        return null;
+      },
+      async getScoresBatch() {
+        return new Map();
+      },
+    },
+  },
+);
+
+void memory;
+void service;
+```
+
+### 1b) Memory adapter for demos/tests
+
+```ts
+import {
+  createLeaderboardService,
+  createMemoryLeaderboardStore,
+} from "@mattycatty/rolling-leaderboard";
+
+const store = createMemoryLeaderboardStore({
+  categories: ["points", "tasks_completed"] as const,
+  timeframes: ["24h"] as const,
+});
+
+const service = createLeaderboardService(
+  {
+    categories: ["points", "tasks_completed"] as const,
+    defaultCategory: "points",
+    timeframes: ["24h"] as const,
+    defaultTimeframe: "24h",
+  },
+  { store },
+);
+```
+
+### 2) Redis adapter usage (Node Redis client)
+
+```ts
+import { createClient } from "redis";
+import {
+  createLeaderboardService,
+  createRedisLeaderboardStore,
+} from "@mattycatty/rolling-leaderboard";
+
+type Category = "points" | "tasks_completed";
+type Timeframe = "24h";
+
+const redis = createClient({ url: process.env.REDIS_URL! });
+await redis.connect();
+
+const store = createRedisLeaderboardStore<Category, Timeframe>(redis, {
+  prefix: "lb",
+  categories: ["points", "tasks_completed"],
+  timeframes: ["24h"],
+});
+
+const service = createLeaderboardService<Category, Timeframe>(
+  {
+    categories: ["points", "tasks_completed"],
+    defaultCategory: "points",
+    timeframes: ["24h"],
+    defaultTimeframe: "24h",
+  },
+  {
+    store,
+    usernames: {
+      async getUsernames(userIds) {
+        const names = await redis.hmGet("lb:usernames", userIds);
+        const map = new Map<string, string>();
+        userIds.forEach((id, i) => {
+          if (names[i]) map.set(id, names[i]!);
+        });
+        return map;
+      },
+    },
+  },
+);
+
+await service.ingest([
+  ["u1", { points: 120, tasks_completed: 30 }],
+  ["u2", { points: 95, tasks_completed: 50 }],
+]);
+
+await service.rebuild(["24h"]);
+
+const leaderboard = await service.getLeaderboard({ timeframe: "24h", orderBy: "points" }, "u1");
+console.log(leaderboard);
+```
+
+### 3) Redis with custom rolling windows and aggregation
+
+```ts
+const store = createRedisLeaderboardStore<
+  "points" | "best_streak",
+  "24h"
+>(redis, {
+  prefix: "lb",
+  categories: ["points", "best_streak"],
+  timeframes: ["24h"],
+  categoryAggregation: {
+    points: "sum",
+    best_streak: "max",
+  },
+  resolveIngestKeys: ({ category, date }) => [
+    `lb:window:${category}:${date.getUTCHours()}`,
+  ],
+  resolveBuildSourceKeys: ({ category }) => [
+    `lb:window:${category}:0`,
+    `lb:window:${category}:1`,
+    `lb:window:${category}:2`,
+  ],
+});
+```
+
+### 4) Definition-first setup for stronger typesafety
+
+```ts
+import {
+  defineLeaderboard,
+  createServiceConfigFromDefinition,
+  createRedisConfigFromDefinition,
+  createLeaderboardService,
+  createRedisLeaderboardStore,
+} from "@mattycatty/rolling-leaderboard";
+
+const definition = defineLeaderboard({
+  categories: [
+    { key: "points", aggregation: "sum" },
+    { key: "best_streak", aggregation: "max" },
+  ] as const,
+  timeframes: ["day", "week", "month"] as const,
+  defaultCategory: "points",
+  defaultTimeframe: "day",
+});
+
+const store = createRedisLeaderboardStore(
+  redis,
+  createRedisConfigFromDefinition(definition, { prefix: "lb:engagement" }),
+);
+
+const service = createLeaderboardService(
+  createServiceConfigFromDefinition(definition),
+  { store },
+);
+```
+
+## Validation behavior
+
+- Service creation throws `LeaderboardConfigError` for invalid defaults.
+- Query handling throws `LeaderboardQueryError` for unknown categories/timeframes.
+- Invalid `limit` values are clamped to `[1, maxLimit]`.
+
+## Testing
+
+- `bun run test`: fast/default test path.
+- `bun run test:integration`: Redis integration tests.
+
+Integration behavior:
+
+- Uses `REDIS_URL` if provided.
+- Otherwise starts `redis:7-alpine` via testcontainers.
+
+## CI and release starter files
+
+- `.github/workflows/ci.yml`
+- `.github/workflows/release.yml`
+- `.changeset/config.json`
+
+## Project docs
+
+- `CONTRIBUTING.md`
+- `docs/architecture.md`
+- `docs/testing.md`
+
+## Separate repository setup checklist
+
+1. Create new GitHub repo (for package only).
+2. Copy package files from `packages/rolling-leaderboard/*` to repo root.
+3. Add repository metadata in `package.json` (`repository`, `homepage`, `bugs`, `license`, `author`).
+4. Enable branch protection on `main`.
+5. Add required secrets:
+   - `NPM_TOKEN` (for npm publish), or configure GitHub Packages.
+6. Run CI once on PR.
+7. Create first changeset and merge to `main`.
+8. Run release workflow to publish first tag/version.
+
+## Integrating back into API later
+
+1. Add dependency in API (`workspace:^`, npm version, or git URL).
+2. Build a thin API composition module that wires:
+   - Redis client -> `createRedisLeaderboardStore`
+   - user lookup port
+   - metadata lookup port
+3. Replace direct API leaderboard module calls with package service calls.
+4. Keep API tests for integration behavior; keep package tests focused on contract behavior.

@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Install
+        run: bun install --frozen-lockfile
+      - name: Typecheck
+        run: bun run typecheck
+      - name: Build
+        run: bun run build
+
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      REDIS_URL: redis://127.0.0.1:6379
+      RUN_INTEGRATION: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Install
+        run: bun install --frozen-lockfile
+      - name: Wait For Redis
+        run: |
+          bun -e '
+            import { createClient } from "redis";
+            const url = process.env.REDIS_URL;
+            if (!url) throw new Error("REDIS_URL is required");
+
+            const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+            let ready = false;
+            for (let i = 0; i < 30; i += 1) {
+              const client = createClient({ url });
+              try {
+                await client.connect();
+                const pong = await client.ping();
+                if (pong === "PONG") {
+                  ready = true;
+                  await client.quit();
+                  break;
+                }
+              } catch {}
+              try { await client.quit(); } catch {}
+              await sleep(1000);
+            }
+
+            if (!ready) {
+              throw new Error("Redis did not become ready in time");
+            }
+          '
+      - name: Run Integration Tests
+        run: bun run test:integration
