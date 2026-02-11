@@ -21,6 +21,14 @@
 - Definition helpers (`src/definition.ts`):
   - Single source of truth for categories/timeframes and aggregation.
   - Derives both service config and redis config.
+- Fluent schema builder (`src/builder.ts`):
+  - Drizzle-style chain API for metrics/timeframes/defaults.
+  - Produces typed blueprints and runtime helpers (`insert`, `update`, `refresh`, `select`).
+- Separated schema + query runtime (`src/schema.ts`):
+  - Defines leaderboards with per-board aggregation + supported timeframes.
+  - Includes a schema-builder DSL (`lbSchema`, `lbBoard`, `lbTimeframe`).
+  - Exposes explicit query behaviors (`query.user`, `query.list`).
+  - Supports query validation via `lbQuerySchema(...)`.
 
 ## Data Flow
 

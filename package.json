@@ -27,6 +27,9 @@
       "import": "./dist/index.js"
     }
   },
+  "dependencies": {
+    "zod": "^4.3.6"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "tsc --build",

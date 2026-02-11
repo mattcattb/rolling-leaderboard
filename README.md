@@ -52,6 +52,10 @@ npm install @mattycatty/rolling-leaderboard
 - `createMemoryLeaderboardStore`
 - `RedisLeaderboardStore`
 - `MemoryLeaderboardStore`
+- `createLeaderboardBuilder` / `leaderboard`
+- `lbSchema` / `lbBoard` / `lbTimeframe`
+- `createRedisLb` / `createMemoryLb` / `createRedisLbFromUrl`
+- `lbQuerySchema`
 - Types and ports (`LeaderboardStorePort`, `UsernamePort`, etc.)
 
 ## Usage examples
@@ -255,6 +259,121 @@ const built = createWindowedLeaderboardRedisConfig({
 
 const store = createRedisLeaderboardStore(redis, built.redis);
 ```
+
+### 6) Drizzle-style leaderboard builder
+
+```ts
+import { leaderboard } from "@mattycatty/rolling-leaderboard";
+
+const engagement = leaderboard("engagement")
+  .sum("points")
+  .max("best_streak")
+  .rolling("day", { unit: "hour", size: 24 })
+  .rolling("week", { unit: "day", size: 7 })
+  .allTime("lifetime")
+  .defaults({
+    metric: "points",
+    timeframe: "day",
+    limit: 25,
+    maxLimit: 100,
+  })
+  .build();
+
+const engine = engagement.createRedisEngine(redis, {
+  usernames,
+  metadata,
+});
+
+await engine.insert("u1", { points: 15, best_streak: 3 });
+await engine.update("u1", { points: 5, best_streak: 7 }); // alias of insert()
+await engine.refresh(["day", "week", "lifetime"]);
+
+const result = await engine.select(
+  { timeframe: "day", orderBy: "points" },
+  "u1",
+);
+```
+
+### 7) Separated definitions + query behavior
+
+```ts
+import {
+  boardKeys,
+  createRedisLb,
+  lbSchema,
+  lbBoard,
+  lbTimeframe,
+} from "@mattycatty/rolling-leaderboard";
+
+const schema = lbSchema({
+  prefix: "lb",
+  timeframes: {
+    day: lbTimeframe.rolling("day", 1),
+    lifetime: lbTimeframe.all(),
+  },
+})
+  .leaderboards({
+    profit: lbBoard.sum("day", "lifetime"),
+    best_streak: lbBoard.max("lifetime"),
+  })
+  .defaults({
+    leaderboard: "profit",
+    timeframe: "lifetime",
+    sort: "desc",
+    limit: 25,
+    maxLimit: 100,
+  });
+
+const boardNames = boardKeys(schema); // ["profit", "best_streak"]
+
+const runtime = createRedisLb(redis, schema);
+
+await runtime.write.ingest([
+  ["u1", { profit: 100, best_streak: 10 }],
+  ["u2", { profit: 250, best_streak: 6 }],
+]);
+await runtime.write.rebuild(["day", "lifetime"]);
+
+const user = await runtime.query.user({
+  leaderboard: "profit",
+  timeframe: "day",
+  userId: "u1",
+});
+
+const top = await runtime.query.list({
+  leaderboard: "profit",
+  timeframe: "day",
+  direction: "desc",
+  limit: 10,
+});
+```
+
+### 8) Query Zod schema from leaderboard definition
+
+```ts
+import { lbQuerySchema } from "@mattycatty/rolling-leaderboard";
+
+const query = lbQuerySchema(schema);
+
+const parsedList = query.list.parse({
+  leaderboard: "profit",
+  timeframe: "day",
+  limit: 25,
+});
+```
+
+### 9) Create Redis runtime directly from URL
+
+```ts
+import { createRedisLbFromUrl } from "@mattycatty/rolling-leaderboard";
+
+const runtime = await createRedisLbFromUrl(process.env.REDIS_URL!, schema);
+
+await runtime.write.rebuild(["day", "lifetime"]);
+await runtime.close();
+```
+
+Note: `createRedisLbFromUrl(...)` dynamically imports `redis`, so your app should include `redis` as a dependency.
 
 ## Validation behavior
 

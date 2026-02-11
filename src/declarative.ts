@@ -7,14 +7,14 @@ import {
 } from "./service";
 import type { LeaderboardMetadata } from "./types";
 
-type RollingUnit = "hour" | "day" | "month";
+export type RollingUnit = "hour" | "day" | "month";
 type WindowToken = "h" | "d" | "m" | "all";
 
-type MetricSpec = {
+export type MetricSpec = {
   aggregation?: LeaderboardAggregation;
 };
 
-type TimeframeSpec =
+export type TimeframeSpec =
   | { type: "all" }
   | { type: "rolling"; unit: RollingUnit; size: number };
 
@@ -193,6 +193,13 @@ function buildBundle<
   return { redis, service, keys };
 }
 
+export function createBundleFromDeclarative<
+  TMetrics extends Record<string, MetricSpec>,
+  TTimeframes extends Record<string, TimeframeSpec>,
+>(definition: DeclarativeLeaderboard<TMetrics, TTimeframes>) {
+  return buildBundle(definition);
+}
+
 export function createRedisLeaderboardEngineFromDeclarative<
   TMetrics extends Record<string, MetricSpec>,
   TTimeframes extends Record<string, TimeframeSpec>,
@@ -212,7 +219,7 @@ export function createRedisLeaderboardEngineFromDeclarative<
   type Metric = keyof TMetrics & string;
   type Timeframe = keyof TTimeframes & string;
 
-  const built = buildBundle(definition);
+  const built = createBundleFromDeclarative(definition);
   const store = createRedisLeaderboardStore<Metric, Timeframe>(client, built.redis);
   const service = createLeaderboardService<Metric, Timeframe, TMetadata>(
     built.service,

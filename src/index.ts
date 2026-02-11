@@ -5,3 +5,6 @@ export * from "./adapters";
 export * from "./definition";
 export * from "./windowed";
 export * from "./declarative";
+export * from "./builder";
+export * from "./schema";
+export * from "./zod";
