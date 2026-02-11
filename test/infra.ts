@@ -3,14 +3,14 @@ export type RedisTestInfra = {
     isOpen: boolean;
     connect: () => Promise<void>;
     quit: () => Promise<void>;
-    flushAll: () => Promise<unknown>;
+    flushDb: () => Promise<unknown>;
   };
   stop: () => Promise<void>;
   clear: () => Promise<void>;
 };
 
 export async function createRedisInfra(): Promise<RedisTestInfra> {
-  const externalUrl = process.env.REDIS_URL;
+  const externalUrl = process.env.REDIS_URL_TEST ?? process.env.REDIS_URL;
   if (externalUrl) {
     const { createClient } = await import("redis");
     const client = createClient({ url: externalUrl });
@@ -19,7 +19,7 @@ export async function createRedisInfra(): Promise<RedisTestInfra> {
     return {
       client,
       clear: async () => {
-        await client.flushAll();
+        await client.flushDb();
       },
       stop: async () => {
         await client.quit();
@@ -47,7 +47,7 @@ export async function createRedisInfra(): Promise<RedisTestInfra> {
   return {
     client,
     clear: async () => {
-      await client.flushAll();
+      await client.flushDb();
     },
     stop: async () => {
       if (client.isOpen) {
